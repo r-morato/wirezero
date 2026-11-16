@@ -16,7 +16,8 @@
       "screenshots/02-details.png",
       "screenshots/09-scan.png",
       "screenshots/10-name.png",
-      "screenshots/03-import.png"
+      "screenshots/03-import.png",
+      "screenshots/07-help.png"
     ],
     "icon": "packaging/icon-256.png",
     "license": "MIT",

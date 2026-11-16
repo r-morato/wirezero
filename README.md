@@ -6,6 +6,16 @@ Import a `.conf`, press Enter, you're on your VPN. Pair it with an SSH app
 
 ![Tunnel list](screenshots/01-list@3x.png)
 
+## Screens
+
+| | |
+|---|---|
+| ![Tunnel list](screenshots/01-list@3x.png)<br>**Tunnels**: status, address, auto-connect badge | ![Details](screenshots/02-details@3x.png)<br>**Details**: address, DNS, endpoint, traffic |
+| ![Import](screenshots/03-import@3x.png)<br>**Import**: `.conf` files found on the device | ![Scan QR](screenshots/09-scan@3x.png)<br>**Scan QR**: import with the camera |
+| ![Name](screenshots/10-name@3x.png)<br>**Name**: name a scanned tunnel | ![Remove original](screenshots/04-remove-original@3x.png)<br>**Key hygiene**: offer to delete the original file |
+| ![Delete](screenshots/06-confirm@3x.png)<br>**Delete**: always confirmed | ![Help](screenshots/07-help@3x.png)<br>**Help**: every key on one screen |
+| ![Empty](screenshots/08-empty@3x.png)<br>**First run**: how to get started | |
+
 ## Features
 
 - Import standard WireGuard (`wg-quick`) `.conf` files

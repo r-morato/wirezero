@@ -58,25 +58,13 @@ def run_sim(outdir):
 
         def __init__(self):
             from PIL import Image, ImageDraw
-            frame = Image.new("L", (640, 480), 120)
-            d = ImageDraw.Draw(frame)
-            d.rectangle((150, 70, 490, 410), fill=245)
-            frame = frame
-            import random
-            rnd = random.Random(4)
-            cell = 12
-            for gy in range(25):
-                for gx in range(25):
-                    finder = (gx < 7 and gy < 7) or (gx > 17 and gy < 7) or (gx < 7 and gy > 17)
-                    on = rnd.random() < 0.5
-                    if finder:
-                        r = max(abs(gx % 18 - 3) if gx > 17 else abs(gx - 3),
-                                abs(gy % 18 - 3) if gy > 17 else abs(gy - 3))
-                        on = r in (0, 1, 3)
-                    if on:
-                        x, y = 170 + gx * cell, 90 + gy * cell
-                        d.rectangle((x, y, x + cell - 1, y + cell - 1), fill=20)
-            frame = frame.crop((80, 0, 560, 480)).resize((1080, 1080))
+            frame = Image.new("L", (1080, 1080), 120)
+            qr_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   "..", "tools", "sim-qr.png")
+            if os.path.exists(qr_path):           # repo checkout: use the sample QR
+                qr = Image.open(qr_path).convert("L").resize((760, 760), Image.NEAREST)
+                ImageDraw.Draw(frame).rectangle((140, 140, 940, 940), fill=245)
+                frame.paste(qr, (160, 160))
             self.frame = (frame.tobytes(), 1080, 1080)
             self.error = None
             self.result = None
