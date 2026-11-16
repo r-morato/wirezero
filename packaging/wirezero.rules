@@ -1,0 +1,15 @@
+// WireZero: let members of the "wirezero" group connect and disconnect
+// NetworkManager profiles. Apps started from the CardputerZero home screen
+// are not in a desktop session, so NetworkManager's default rule does not
+// cover them.
+//
+// Deliberately NOT granted: settings.modify.system. That permission would
+// also let any program running as the user read stored VPN private keys.
+// Adding/removing tunnels goes through wirezero-helper (via sudo) instead,
+// which never returns secrets.
+polkit.addRule(function (action, subject) {
+    if (action.id == "org.freedesktop.NetworkManager.network-control" &&
+        subject.isInGroup("wirezero")) {
+        return polkit.Result.YES;
+    }
+});

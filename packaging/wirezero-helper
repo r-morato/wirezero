@@ -1,0 +1,12 @@
+#!/usr/bin/python3 -IB
+"""Root helper for WireZero (see wirezero/helper.py). Reached only via sudo.
+
+Lives in /usr/libexec/wirezero and imports code only from /usr/lib/wirezero,
+both root-owned and outside any launcher-managed folder."""
+import sys
+
+sys.path.insert(0, "/usr/lib/wirezero")
+
+from wirezero.helper import main  # noqa: E402
+
+sys.exit(main(sys.argv[1:]))

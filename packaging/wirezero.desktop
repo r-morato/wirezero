@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=WireZero
+Comment=Manage WireGuard VPN tunnels
+Exec=/usr/share/APPLaunch/bin/wirezero
+Icon=share/images/wirezero.png
+Terminal=false
+Categories=Network;
+StartupNotify=false

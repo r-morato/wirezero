@@ -1,0 +1,63 @@
+#!/bin/sh
+set -e
+
+SUDOERS=/etc/sudoers.d/wirezero
+HELPER=/usr/libexec/wirezero/wirezero-helper
+
+# The sudo rule is only safe if nobody but root can replace the helper or the
+# code it imports. Refuse to install it otherwise.
+root_only() {
+    p="$1"
+    while [ -n "$p" ] && [ "$p" != "/" ]; do
+        [ -e "$p" ] || return 1
+        [ "$(stat -c %u "$p")" = 0 ] || return 1
+        case "$(stat -c %A "$p")" in
+            ?????w????|????????w?) return 1 ;;   # group- or world-writable
+        esac
+        p="$(dirname "$p")"
+    done
+    return 0
+}
+
+if [ "$1" = "configure" ]; then
+    getent group wirezero >/dev/null || addgroup --system wirezero >/dev/null
+
+    # The home screen launches apps as the device's main user (uid 1000).
+    user="$(getent passwd 1000 | cut -d: -f1 || true)"
+    if [ -n "$user" ]; then
+        usermod -aG wirezero "$user"
+        # Screen and keyboard access, as for every CardputerZero app.
+        for grp in video input; do
+            getent group "$grp" >/dev/null && usermod -aG "$grp" "$user" || true
+        done
+    fi
+
+    ok=1
+    for f in "$HELPER" /usr/lib/wirezero/wirezero/helper.py /usr/lib/wirezero/wirezero/nm.py \
+             /usr/lib/wirezero/wirezero/__init__.py; do
+        root_only "$f" || ok=0
+    done
+    if [ "$ok" = 1 ]; then
+        # One narrow sudo rule: the helper only, no password, nothing else.
+        # Written inside sudoers.d under a dotted name (ignored by sudo) and
+        # renamed into place atomically.
+        tmp="/etc/sudoers.d/.wirezero.tmp"
+        rm -f "$tmp"
+        ( umask 0337
+          printf '%s\n' \
+            '# Installed by the wirezero package. Removed when it is removed.' \
+            "%wirezero ALL=(root) NOPASSWD: $HELPER" > "$tmp" )
+        chmod 0440 "$tmp"
+        if visudo -cf "$tmp" >/dev/null 2>&1; then
+            mv -f "$tmp" "$SUDOERS"
+        else
+            rm -f "$tmp"
+            echo "wirezero: sudoers rule failed validation; import/delete disabled" >&2
+        fi
+    else
+        rm -f "$SUDOERS"
+        echo "wirezero: helper path is not root-only; import/delete disabled" >&2
+    fi
+fi
+
+exit 0
