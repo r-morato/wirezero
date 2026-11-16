@@ -19,7 +19,7 @@ Tunnels are stored by NetworkManager, so they keep working after you close the a
 Search the CardputerZero Store for **WireZero** (share code `WGZ0`), or build the `.deb` with `packaging/build-deb.sh` and run:
 
 ```sh
-sudo apt install ./wirezero_0.3.1-1_arm64.deb
+sudo apt install ./wirezero_0.3.2-1_arm64.deb
 ```
 
 Needs the official CardputerZero image (Debian 13 with NetworkManager). QR scanning needs the camera, so the Lite model is file import only.
