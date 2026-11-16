@@ -194,7 +194,7 @@ class TestBackend(unittest.TestCase):
         self.assertEqual(seen["args"][3:], ["import", "WorkVPN"])
         self.assertIn("PrivateKey", seen["stdin"])         # key travels on stdin only
         self.assertNotIn(src, " ".join(seen["args"]))       # no user path given to root
-        self.assertIn("PostUp/PreUp lines were ignored", warns)
+        self.assertIn("Its PostUp/PreUp lines were skipped.", warns)
 
     def test_import_refuses_symlink_and_huge_files(self):
         with tempfile.TemporaryDirectory() as d:

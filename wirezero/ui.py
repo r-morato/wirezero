@@ -392,10 +392,10 @@ class App:
                      lambda res: self.after_import(res[0], res[1], path))
 
     def after_import(self, name, warns, path):
-        msg = "Imported as '%s'" % name
+        msg = "Imported as '%s'." % name
         if warns:
-            msg += " - " + "; ".join(warns)
-        self.show_toast(msg, AMBER if warns else GREEN, 6 if warns else 3)
+            msg += "\n" + " ".join(warns)
+        self.show_toast(msg, GREEN, 6 if warns else 3)
         if path is None:
             return
 
@@ -948,10 +948,16 @@ class App:
         if time.monotonic() > until:
             self.toast = None
             return
-        y0 = BAR_TOP - 26
+        head, _, note = text.partition("\n")
+        lines = [ellipsize(d, head, self.f.body, 300)]
+        if note:
+            lines.append(ellipsize(d, note, self.f.small, 300))
+        y0 = BAR_TOP - 10 - 16 * len(lines)
         d.rectangle((0, y0, WIDTH, BAR_TOP - 1), fill=PANEL)
         d.line((0, y0, WIDTH, y0), fill=color)
-        d.text((10, y0 + 6), ellipsize(d, text, self.f.body, 300), font=self.f.body, fill=color)
+        for i, line in enumerate(lines):
+            # first line in the status colour, the rest as plain information
+            d.text((10, y0 + 5 + 16 * i), line, font=self.f.body, fill=color if i == 0 else TEXT)
 
     # ---------------------------------------------------------- main loop
     def start(self):

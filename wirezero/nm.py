@@ -497,9 +497,9 @@ class NMBackend:
 def import_warnings(text):
     warns = []
     if script_lines(text):
-        warns.append("PostUp/PreUp lines were ignored")
+        warns.append("Its PostUp/PreUp lines were skipped.")
     if is_full_tunnel(text) and not covers_ipv6(text):
-        warns.append("IPv6 not tunnelled")
+        warns.append("IPv6 traffic will use your normal connection.")
     return warns
 
 
