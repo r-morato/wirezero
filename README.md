@@ -8,15 +8,15 @@ Import a tunnel from a `.conf` file or by scanning its QR code with the camera, 
 
 ## How it works
 
-1. **Import.** Press `5` to pick a `.conf` from your home folder, a USB stick or the SD card's boot partition, or `6` there to scan a QR code.
+1. **Import.** Press `5` to pick a `.conf` from your home folder, a USB stick or the SD card's boot partition, or `6` there to scan a QR code. Adding a tunnel needs admin rights, so WireZero asks for your password (the one `sudo` uses).
 2. **Connect.** Press `Enter` on a tunnel. The dot turns green and shows your tunnel address.
 3. **Check.** Press `6` for address, DNS, endpoint and traffic. Press `7` to connect at boot.
 
-Tunnels are stored by NetworkManager, so they keep working after you close the app.
+Connecting and disconnecting normally don't ask for a password. Deleting a tunnel and changing auto-connect do, but the password is remembered for 5 minutes. Tunnels are stored by NetworkManager, so they keep working after you close the app.
 
 ## Install
 
-Search the CardputerZero Store for **WireZero** (share code `WGZ0`), or build the `.deb` with `packaging/build-deb.sh` and run:
+WireZero is waiting for review in the CardputerZero Store (share code `WGZ0`). Until then, build the `.deb` with `packaging/build-deb.sh` and run:
 
 ```sh
 sudo apt install ./wirezero_0.4.1-1_arm64.deb
