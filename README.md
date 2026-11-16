@@ -126,7 +126,7 @@ packaging/build-deb.sh                      # -> build/wirezero_<ver>-1_arm64.de
 python3 tools/make_icons.py                 # regenerate icons
 ```
 
-Install on the device: `sudo apt install ./wirezero_0.3.0-1_arm64.deb`
+Install on the device: `sudo apt install ./wirezero_0.3.1-1_arm64.deb`
 
 ## License
 

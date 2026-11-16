@@ -475,6 +475,18 @@ class TestApp(unittest.TestCase):
             f = os.path.join(d, os.listdir(d)[0])
             self.assertEqual(os.stat(f).st_mode & 0o777, 0o600)
 
+    def test_toast_waits_for_dialog(self):
+        _, app = self.make()
+        app.show_toast("Imported as 'x'")
+        app.confirm = ("Remove the original file?", "It contains your private key",
+                       lambda: None, "remove")
+        app.tick([])
+        img = app.render()
+        # bottom strip above the bar shows the dialog, not the toast panel
+        self.assertNotEqual(img.getpixel((5, 120)), (22, 27, 34))
+        app.tick(["esc"])
+        self.assertIsNotNone(app.toast)          # still there after answering
+
     def test_esc_quits_from_list(self):
         _, app = self.make()
         app.tick(["esc"])

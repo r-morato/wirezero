@@ -448,7 +448,7 @@ def import_warnings(text):
     if script_lines(text):
         warns.append("PostUp/PreUp lines were ignored")
     if is_full_tunnel(text) and not covers_ipv6(text):
-        warns.append("IPv6 traffic bypasses this tunnel")
+        warns.append("IPv6 not tunnelled")
     return warns
 
 

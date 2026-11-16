@@ -588,7 +588,7 @@ class App:
             self.draw_confirm(d)
         if self.busy:
             self.draw_busy(d)
-        elif self.toast:
+        elif self.toast and not self.confirm:   # never cover a dialog's key hints
             self.draw_toast(d)
         return img
 
@@ -914,6 +914,10 @@ class App:
         if self.busy:
             self._spin = (self._spin + 1) % 8
             self.dirty = True
+        if self.toast and self.confirm:
+            # Hold the message until the dialog is answered, then show it in full.
+            text, color, until = self.toast
+            self.toast = (text, color, max(until, time.monotonic() + 3.0))
         if self.toast and time.monotonic() > self.toast[2]:
             self.toast = None
             self.dirty = True

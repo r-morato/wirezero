@@ -2,7 +2,7 @@
   "app_name": "WireZero",
   "package_name": "wirezero",
   "bin_name": "wirezero",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "WireGuard VPN tunnels for the CardputerZero",
   "store": {
     "summary": "Connect to your WireGuard VPN tunnels from the keyboard",
@@ -15,6 +15,7 @@
       "screenshots/01-list.png",
       "screenshots/02-details.png",
       "screenshots/09-scan.png",
+      "screenshots/10-name.png",
       "screenshots/03-import.png"
     ],
     "icon": "packaging/icon-256.png",
