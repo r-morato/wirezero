@@ -5,8 +5,8 @@
   "version": "0.3.1",
   "description": "WireGuard VPN tunnels for the CardputerZero",
   "store": {
-    "summary": "Connect to your WireGuard VPN tunnels from the keyboard",
-    "description": "WireZero imports WireGuard .conf files into NetworkManager and lets you connect, disconnect and check tunnels from the CardputerZero. Drop a .conf in your home folder, on a USB stick or on the SD card's boot partition, press 5 to import (or 6 to scan your router's WireGuard QR code with the camera), then Enter to connect. Shows tunnel address, DNS and traffic, and can auto-connect a tunnel at boot. Pair it with an SSH app to reach machines on your VPN. Needs NetworkManager (default on the official image). Security-focused: the app never runs as root and private keys stay readable by root only. WireGuard is a registered trademark of Jason A. Donenfeld; WireZero is not affiliated with the WireGuard project.",
+    "summary": "WireGuard VPN client: import by file or QR code, connect from the keyboard",
+    "description": "Import a WireGuard tunnel from a .conf file or by scanning its QR code with the camera, then connect with one key. Shows tunnel address, DNS and traffic, and can connect at boot. Never runs as root; private keys stay root-only. Needs NetworkManager (default on the official image). WireGuard is a registered trademark of Jason A. Donenfeld.",
     "categories": [
       "Security",
       "System Tools"
