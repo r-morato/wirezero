@@ -19,7 +19,7 @@ Tunnels are stored by NetworkManager, so they keep working after you close the a
 Search the CardputerZero Store for **WireZero** (share code `WGZ0`), or build the `.deb` with `packaging/build-deb.sh` and run:
 
 ```sh
-sudo apt install ./wirezero_0.3.2-1_arm64.deb
+sudo apt install ./wirezero_0.4.0-1_arm64.deb
 ```
 
 Needs the official CardputerZero image (Debian 13 with NetworkManager). QR scanning needs the camera, so the Lite model is file import only.
@@ -39,10 +39,10 @@ Needs the official CardputerZero image (Debian 13 with NetworkManager). QR scann
 
 ## Security
 
-- The app only gets permission to connect and disconnect. Adding and removing tunnels goes through a small root helper that only handles WireGuard profiles and never returns key material.
+- Installs no sudo or polkit rules. When the system needs admin rights (adding, deleting, auto-connect), WireZero asks for your password and runs a small helper that only acts on WireGuard profiles and never returns key material. The password is kept in memory for 5 minutes and never saved.
 - Keys never touch disk outside NetworkManager's root-only store. After a file import, WireZero offers to delete the original `.conf`.
 - `PostUp`/`PreUp` scripts are stripped, and configs that change system routing (`FwMark`, a custom `Table`) are refused.
-- Screenshots are blocked while the camera is on, since the QR code holds your key.
+- Screenshots are blocked on the camera and password screens.
 
 ## Limitations
 

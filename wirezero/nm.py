@@ -1,7 +1,8 @@
 """NetworkManager backend for WireZero.
 
-Everything goes through `nmcli`, so WireZero itself never needs root:
-NetworkManager does the privileged work and polkit decides who may ask.
+Status is read with `nmcli` as the normal user. Anything that changes a
+tunnel (connect, disconnect, import, delete, auto-connect) goes through
+wirezero-helper via sudo, which only ever acts on WireGuard profiles.
 """
 
 import os
@@ -13,7 +14,9 @@ from dataclasses import dataclass
 
 NMCLI = "nmcli"
 SUDO = "/usr/bin/sudo"
-HELPER = "/usr/libexec/wirezero/wirezero-helper"
+HELPER = "/usr/lib/wirezero/wirezero-helper"
+ASKPASS = "/usr/lib/wirezero/wirezero-askpass"
+PASSWORD_ENV = "WIREZERO_SUDO_PASSWORD"
 IFNAME_MAX = 15
 MAX_CONF_BYTES = 64 * 1024
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,14}")   # use .fullmatch()
@@ -21,9 +24,11 @@ SCRIPT_KEYS = ("PreUp", "PostUp", "PreDown", "PostDown", "SaveConfig")
 
 
 class NMError(Exception):
-    def __init__(self, message, auth=False):
+    def __init__(self, message, auth=False, need_password=False, bad_password=False):
         super().__init__(message)
         self.auth = auth
+        self.need_password = need_password
+        self.bad_password = bad_password
 
 
 @dataclass
@@ -288,18 +293,26 @@ AUTH_PATTERNS = ("not authorized", "insufficient privileges", "permission denied
 class NMBackend:
     def __init__(self, runner=None):
         self._run_impl = runner or self._subprocess_run
+        self.password = None        # set by the UI for a short while, never stored
 
     @staticmethod
-    def _subprocess_run(args, timeout, stdin_text=None):
+    def _subprocess_run(args, timeout, stdin_text=None, extra_env=None):
+        env = dict(os.environ, LC_ALL="C")
+        env.pop(PASSWORD_ENV, None)
+        if extra_env:
+            env.update(extra_env)
         p = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
                            input=stdin_text,
                            stdin=None if stdin_text is not None else subprocess.DEVNULL,
-                           env=dict(os.environ, LC_ALL="C"))
+                           env=env)
         return p.returncode, p.stdout, p.stderr
 
-    def _exec(self, argv, timeout, stdin_text=None, missing="NetworkManager (nmcli) is not installed"):
+    def _exec(self, argv, timeout, stdin_text=None, missing="NetworkManager (nmcli) is not installed",
+              extra_env=None):
         try:
-            if stdin_text is None:
+            if extra_env is not None:
+                code, out, err = self._run_impl(argv, timeout, stdin_text, extra_env)
+            elif stdin_text is None:
                 code, out, err = self._run_impl(argv, timeout)
             else:
                 code, out, err = self._run_impl(argv, timeout, stdin_text)
@@ -316,9 +329,35 @@ class NMBackend:
         return self._exec([NMCLI] + list(args), timeout)
 
     def _helper(self, *args, stdin_text=None, timeout=40):
-        """Admin actions go through the root helper via a no-password sudo rule."""
-        return self._exec([SUDO, "-n", HELPER] + list(args), timeout, stdin_text,
-                          missing="sudo is not installed")
+        """Run the root helper through sudo.
+
+        First without a password (works if sudo doesn't need one). Otherwise
+        with the password the user typed, handed to sudo by a tiny askpass
+        program through the environment: never on the command line, and never
+        on stdin, which carries the config.
+        """
+        try:
+            return self._exec([SUDO, "-n", HELPER] + list(args), timeout, stdin_text,
+                              missing="sudo is not installed")
+        except NMError as e:
+            low = str(e).lower()
+            if "password is required" not in low:
+                if "sudoers" in low or "may not run sudo" in low:
+                    raise NMError("Your user isn't allowed to use sudo, so WireZero can't "
+                                  "change tunnels.", auth=True)
+                raise
+        if not self.password:
+            raise NMError("Password needed", auth=True, need_password=True)
+        try:
+            return self._exec([SUDO, "-A", "-k", HELPER] + list(args), timeout, stdin_text,
+                              missing="sudo is not installed",
+                              extra_env={"SUDO_ASKPASS": ASKPASS, PASSWORD_ENV: self.password})
+        except NMError as e:
+            low = str(e).lower()
+            if "incorrect password" in low or "try again" in low or "no password was provided" in low:
+                self.password = None
+                raise NMError("Wrong password", auth=True, need_password=True, bad_password=True)
+            raise
 
     # -- queries -----------------------------------------------------------
     def check(self):
@@ -400,10 +439,22 @@ class NMBackend:
 
     # -- actions -----------------------------------------------------------
     def up(self, tunnel):
-        self._run("--wait", "25", "connection", "up", "uuid", tunnel.uuid, timeout=35)
+        # Plain NetworkManager first: on most images the user may connect
+        # without a password. Fall back to the helper only if refused.
+        try:
+            self._run("--wait", "25", "connection", "up", "uuid", tunnel.uuid, timeout=35)
+        except NMError as e:
+            if not e.auth:
+                raise
+            self._helper("up", tunnel.uuid, timeout=45)
 
     def down(self, tunnel):
-        self._run("connection", "down", "uuid", tunnel.uuid, timeout=20)
+        try:
+            self._run("connection", "down", "uuid", tunnel.uuid, timeout=20)
+        except NMError as e:
+            if not e.auth:
+                raise
+            self._helper("down", tunnel.uuid, timeout=30)
 
     def set_autoconnect(self, tunnel, on):
         self._helper("autoconnect", tunnel.uuid, "yes" if on else "no")
@@ -498,6 +549,8 @@ class FakeBackend:
             Tunnel("vps-london", "33333333-cccc", False, "down"),
         ]
         self.fail_auth = False
+        self.require_password = None   # e.g. "secret": admin actions need it
+        self.password = None
 
     def check(self):
         return None
@@ -524,16 +577,22 @@ class FakeBackend:
     def traffic(self, iface):
         return 3_565_158, 831_488
 
-    def _guard(self):
+    def _guard(self, admin=True):
         if self.fail_auth:
             raise NMError("Not authorized to control networking.", auth=True)
+        if admin and self.require_password is not None:
+            if self.password is None:
+                raise NMError("Password needed", auth=True, need_password=True)
+            if self.password != self.require_password:
+                self.password = None
+                raise NMError("Wrong password", auth=True, need_password=True, bad_password=True)
 
     def up(self, t):
-        self._guard()
+        self._guard(admin=False)
         self._find(t).state = "up"
 
     def down(self, t):
-        self._guard()
+        self._guard(admin=False)
         self._find(t).state = "down"
 
     def set_autoconnect(self, t, on):

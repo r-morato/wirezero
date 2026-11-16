@@ -42,16 +42,22 @@ for _start, _row in _ROWS.items():
     CHARS.update({_start + i: c for i, c in enumerate(_row)})
 
 
+# Full US layout for password entry: code -> (plain, shifted).
+_SHIFT_DIGITS = dict(zip("1234567890", "!@#$%^&*()"))
+FULL = {code: (c, c.upper() if c.isalpha() else _SHIFT_DIGITS[c]) for code, c in CHARS.items()}
+FULL.update({12: ("-", "_"), 13: ("=", "+"), 26: ("[", "{"), 27: ("]", "}"),
+             39: (";", ":"), 40: ("'", '"'), 41: ("`", "~"), 43: ("\\", "|"),
+             51: (",", "<"), 52: (".", ">"), 53: ("/", "?"), 57: (" ", " ")})
+
+
 def char_for(code, value, shift=False):
-    """Text typed by a key press (name entry only), or None."""
+    """Text typed by a key press, or None. Covers the full US layout."""
     if value not in (1, 2):
         return None
-    if code == KEY_MINUS:
-        return "_" if shift else "-"
-    c = CHARS.get(code)
-    if c and shift and c.isalpha():
-        return c.upper()
-    return c
+    pair = FULL.get(code)
+    if not pair:
+        return None
+    return pair[1] if shift else pair[0]
 
 
 def translate(code, value, shift=False):

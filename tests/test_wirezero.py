@@ -31,8 +31,9 @@ class FakeRunner:
         self.responses = responses
         self.calls = []
 
-    def __call__(self, args, timeout):
+    def __call__(self, args, timeout, stdin_text=None, extra_env=None):
         self.calls.append(args[1:])
+        self.envs = getattr(self, "envs", []) + [extra_env]
         key = " ".join(args[1:])
         for prefix, resp in self.responses:
             if key.startswith(prefix):
@@ -145,11 +146,37 @@ class TestBackend(unittest.TestCase):
         self.assertEqual(ts[0].state, "activating")
 
     def test_auth_error_flagged(self):
-        r = FakeRunner([("--wait 25 connection up", (1, "", "Error: Not authorized to control networking.\n"))])
+        r = FakeRunner([("--wait", (1, "", "Error: Not authorized to control networking.\n")),
+                        ("-n", (1, "", "sudo: a password is required\n"))])
         with self.assertRaises(nm.NMError) as cm:
             nm.NMBackend(r).up(nm.Tunnel("home", "u1", False, "down"))
-        self.assertTrue(cm.exception.auth)
-        self.assertEqual(str(cm.exception), "Not authorized to control networking.")
+        self.assertTrue(cm.exception.need_password)   # falls back to helper, which asks
+
+    def test_connect_without_password_when_allowed(self):
+        r = FakeRunner([])
+        nm.NMBackend(r).up(nm.Tunnel("home", "u1", False, "down"))
+        self.assertEqual(len(r.calls), 1)               # plain nmcli, no sudo
+        self.assertEqual(r.calls[0][:3], ["--wait", "25", "connection"])
+
+    def test_password_goes_via_askpass_env_only(self):
+        r = FakeRunner([("-n", (1, "", "sudo: a password is required\n"))])
+        b = nm.NMBackend(r)
+        b.password = "s3cr3t!"
+        b.delete(nm.Tunnel("x", "11111111-2222-3333-4444-555555555555", False, "down"))
+        argv = r.calls[-1]
+        self.assertEqual(argv[:3], ["-A", "-k", nm.HELPER])
+        self.assertNotIn("s3cr3t!", " ".join(argv))
+        self.assertEqual(r.envs[-1], {"SUDO_ASKPASS": nm.ASKPASS, nm.PASSWORD_ENV: "s3cr3t!"})
+
+    def test_wrong_password_is_reported_and_forgotten(self):
+        r = FakeRunner([("-n", (1, "", "sudo: a password is required\n")),
+                        ("-A", (1, "", "sudo: 3 incorrect password attempts\n"))])
+        b = nm.NMBackend(r)
+        b.password = "nope"
+        with self.assertRaises(nm.NMError) as cm:
+            b.delete(nm.Tunnel("x", "11111111-2222-3333-4444-555555555555", False, "down"))
+        self.assertTrue(cm.exception.bad_password)
+        self.assertIsNone(b.password)
 
     def test_import_goes_through_helper_with_stdin(self):
         seen = {}
@@ -261,6 +288,14 @@ class TestHelper(unittest.TestCase):
             sp.run = orig_run
         self.assertEqual(str(cm.exception), "Import failed: invalid secret 'PrivateKey' on line 2.")
 
+    def test_up_down_only_for_wireguard(self):
+        if os.geteuid() != 0:
+            self.skipTest("main() exits early when not root")
+        self.assertEqual(self.h.main(["up", "aaaaaaaa-2222-3333-4444-555555555555"]), 1)   # Wi-Fi
+        self.assertEqual(self.h.main(["up", "11111111-2222-3333-4444-555555555555"]), 0)
+        self.assertIn(("--wait", "25", "connection", "up", "uuid",
+                       "11111111-2222-3333-4444-555555555555"), self.calls)
+
     def test_require_wireguard_blocks_wifi_and_bad_ids(self):
         with self.assertRaises(self.h.Fail):
             self.h.require_wireguard("aaaaaaaa-2222-3333-4444-555555555555")
@@ -313,6 +348,9 @@ class TestKeys(unittest.TestCase):
         self.assertEqual(keys.char_for(keys.KEY_F, 1), "f")
         self.assertEqual(keys.char_for(keys.KEY_MINUS, 1, shift=True), "_")
         self.assertEqual(keys.char_for(keys.KEY_1, 1), "1")
+        self.assertEqual(keys.char_for(keys.KEY_1, 1, shift=True), "!")
+        self.assertEqual(keys.char_for(keys.KEY_SLASH, 1, shift=True), "?")
+        self.assertEqual(keys.char_for(keys.KEY_SPACE, 1), " ")
 
 
 class TestZbar(unittest.TestCase):
@@ -373,12 +411,47 @@ class TestApp(unittest.TestCase):
         self.wait(app)
         self.assertEqual(len(fake.tunnels), 2)
 
-    def test_auth_failure_sets_flag(self):
+    def test_auth_failure_is_shown(self):
         fake, app = self.make()
         fake.fail_auth = True
         app.tick(["k7"])
         self.wait(app)
-        self.assertTrue(app.auth_problem)
+        self.assertIn("Not authorized", (app.toast or ("",))[0] + " ".join(app.error_lines))
+
+    def test_password_prompt_then_retry(self):
+        fake, app = self.make()
+        fake.require_password = "pa ss!"
+        app.tick(["k8", "enter"])            # delete -> confirm
+        self.wait(app)
+        self.assertEqual(app.screen, "password")
+        app.tick(["ch:x", "enter"])          # wrong
+        self.wait(app)
+        self.assertEqual(app.screen, "password")
+        self.assertTrue(app.pw_wrong)
+        # "h" and "k4" are ignored while typing; symbols and spaces are allowed
+        app.tick(["ch:p", "ch:a", "ch: ", "ch:s", "ch:s", "ch:!", "h", "k4", "enter"])
+        self.wait(app)
+        self.assertEqual(len(fake.tunnels), 2)       # deleted after the right password
+        self.assertEqual(app.pw_text, "")
+        app.tick(["k8", "enter"])                     # cached: no prompt this time
+        self.wait(app)
+        self.assertEqual(len(fake.tunnels), 1)
+        app.pw_set_at -= app.PASSWORD_TTL + 1         # expires
+        app.tick([])
+        self.assertIsNone(fake.password)
+
+    def test_no_screenshot_on_password_screen(self):
+        _, app = self.make()
+        app.ask_password(("x", lambda: None, None))
+        with tempfile.TemporaryDirectory() as home:
+            old = os.environ.get("HOME")
+            os.environ["HOME"] = home
+            try:
+                app.tick(["screenshot"])
+            finally:
+                if old is not None:
+                    os.environ["HOME"] = old
+            self.assertFalse(os.path.exists(os.path.join(home, "Pictures")))
 
     def test_import_offers_to_remove_key_file(self):
         fake, app = self.make()
@@ -428,7 +501,7 @@ class TestApp(unittest.TestCase):
         self.assertIn("isn't a WireGuard", app.toast[0])
         app.tick([])                       # WireGuard QR -> name box
         self.assertEqual(app.screen, "name")
-        app.tick(["backspace"] * 5 + ["ch:h", "ch:o", "ch:m", "up", "k4", "ch:e", "ch:-", "ch:2"])
+        app.tick(["backspace"] * 5 + ["ch:h", "ch:o", "ch:m", "up", "k4", "ch:e", "ch:-", "ch:!", "ch:2"])
         self.assertEqual(app.name_text, "home-2")   # arrows/number actions ignored while typing
         app.tick(["enter"])
         self.wait(app)

@@ -178,6 +178,11 @@ class App:
         self.busy = None              # text while a background job runs
         self.fatal = None
         self.auth_problem = False
+        self.pw_job = None
+        self.pw_text = ""
+        self.pw_wrong = False
+        self.pw_from = "list"
+        self.pw_set_at = None
         self.net = "unknown"
         self.help_from = "list"
         self.error_lines = []
@@ -229,18 +234,26 @@ class App:
             self.detail_rows = [("Error", str(e))]
 
     # ---------------------------------------------------------- jobs
-    def run_job(self, label, fn, done_msg=None):
+    PASSWORD_TTL = 300   # seconds a typed password is reused, like sudo's own cache
+
+    def run_job(self, label, fn, done=None):
+        """Run fn() in the background. `done` is a message string, or a callable
+        taking fn's result (run on the UI thread). Jobs that need an admin
+        password are parked and retried once the user has typed it."""
         if self.busy:
             return
         self.busy = label
         self.dirty = True
+        job = (label, fn, done)
 
         def work():
             try:
-                res = fn()
-                self._jobs.put(("ok", done_msg(res) if callable(done_msg) else done_msg))
+                self._jobs.put(("ok", (job, fn())))
             except NMError as e:
-                self._jobs.put(("auth" if e.auth else "err", str(e)))
+                if e.need_password:
+                    self._jobs.put(("password", (job, e.bad_password)))
+                else:
+                    self._jobs.put(("auth" if e.auth else "err", str(e)))
             except Exception as e:  # never let a worker kill the UI
                 self._jobs.put(("err", "%s: %s" % (type(e).__name__, e)))
 
@@ -252,17 +265,61 @@ class App:
         except queue.Empty:
             return
         self.busy = None
-        if kind == "imported":
-            self.after_import(*msg)
-        elif kind == "ok":
-            if msg:
-                self.show_toast(msg, GREEN)
+        if kind == "ok":
+            (label, fn, done), res = msg
+            if callable(done):
+                done(res)
+            elif done:
+                self.show_toast(done, GREEN)
+            self.password_used()
+        elif kind == "password":
+            job, bad = msg
+            self.forget_password()
+            self.ask_password(job, wrong=bad)
+            return
         elif kind == "auth":
-            self.auth_problem = True
-            self.show_toast("Not allowed to change networks - press H", RED, 6)
+            self.show_error(msg)
         else:
             self.show_error(msg)
         self.refresh(force=True)
+
+    # -- admin password (kept in memory only, for a few minutes)
+    def ask_password(self, job, wrong=False):
+        self.pw_job = job
+        self.pw_text = ""
+        self.pw_wrong = wrong
+        self.pw_from = self.screen if self.screen not in ("password", "error") else "list"
+        self.screen = "password"
+        self.dirty = True
+
+    def submit_password(self):
+        if not self.pw_text:
+            return
+        self.nm.password = self.pw_text
+        self.pw_set_at = time.monotonic()
+        self.pw_text = ""
+        job, self.pw_job = self.pw_job, None
+        self.screen = self.pw_from if self.pw_from != "scan" else "list"
+        self.run_job(*job)
+
+    def cancel_password(self):
+        self.pw_text = ""
+        self.pw_job = None
+        self.screen = self.pw_from if self.pw_from != "scan" else "list"
+        self.pending_conf = None
+
+    def password_used(self):
+        if getattr(self.nm, "password", None):
+            self.pw_set_at = time.monotonic()
+
+    def forget_password(self):
+        if hasattr(self.nm, "password"):
+            self.nm.password = None
+        self.pw_set_at = None
+
+    def expire_password(self):
+        if self.pw_set_at and time.monotonic() - self.pw_set_at > self.PASSWORD_TTL:
+            self.forget_password()
 
     def show_error(self, msg):
         """Short errors as a toast; long ones on a full screen so nothing is cut off."""
@@ -330,19 +387,9 @@ class App:
         path = self.confs[self.conf_sel]
         names = [t.name for t in self.tunnels]
         self.screen = "list"
-        self.busy = "Importing %s" % os.path.basename(path)
-        self.dirty = True
-
-        def work():
-            try:
-                name, warns = self.nm.import_conf(path, names)
-                self._jobs.put(("imported", (name, warns, path)))
-            except NMError as e:
-                self._jobs.put(("auth" if e.auth else "err", str(e)))
-            except Exception as e:
-                self._jobs.put(("err", "%s: %s" % (type(e).__name__, e)))
-
-        threading.Thread(target=work, daemon=True).start()
+        self.run_job("Importing %s" % os.path.basename(path),
+                     lambda: self.nm.import_conf(path, names),
+                     lambda res: self.after_import(res[0], res[1], path))
 
     def after_import(self, name, warns, path):
         msg = "Imported as '%s'" % name
@@ -423,19 +470,8 @@ class App:
             return
         text, self.pending_conf = self.pending_conf, None
         self.screen = "list"
-        self.busy = "Importing %s" % name
-        self.dirty = True
-
-        def work():
-            try:
-                res = self.nm.import_text(text, name)
-                self._jobs.put(("imported", (res[0], res[1], None)))
-            except NMError as e:
-                self._jobs.put(("auth" if e.auth else "err", str(e)))
-            except Exception as e:
-                self._jobs.put(("err", "%s: %s" % (type(e).__name__, e)))
-
-        threading.Thread(target=work, daemon=True).start()
+        self.run_job("Importing %s" % name, lambda: self.nm.import_text(text, name),
+                     lambda res: self.after_import(res[0], res[1], None))
 
     def open_help(self):
         self.help_from = self.screen
@@ -465,12 +501,15 @@ class App:
 
     def handle(self, a):
         self.dirty = True
-        if a.startswith("ch:") and self.screen != "name":
+        typing = self.screen in ("name", "password")
+        if a.startswith("ch:") and not typing:
             return
-        if self.screen == "name" and not (a.startswith("ch:") or a in
-                                          ("backspace", "enter", "esc", "screenshot")):
+        if typing and not (a.startswith("ch:") or a in ("backspace", "enter", "esc", "screenshot")):
             return
         if a == "screenshot":
+            if self.screen == "password":
+                self.show_toast("No screenshots on the password screen", AMBER)
+                return
             self.save_screenshot()
             return
         if self.confirm:
@@ -567,10 +606,22 @@ class App:
             self.stop_scan()
             self.screen = "import"
 
+    def key_password(self, a):
+        if a.startswith("ch:"):
+            if len(self.pw_text) < 256:
+                self.pw_text += a[3:]
+        elif a == "backspace":
+            self.pw_text = self.pw_text[:-1]
+        elif a == "enter":
+            self.submit_password()
+        elif a == "esc":
+            self.cancel_password()
+
     def key_name(self, a):
         if a.startswith("ch:"):
-            if len(self.name_text) < 15:
-                self.name_text += a[3:]
+            ch = a[3:]
+            if len(self.name_text) < 15 and (ch.isalnum() or ch in "-_") and ch.isascii():
+                self.name_text += ch
         elif a == "backspace":
             self.name_text = self.name_text[:-1]
         elif a == "enter":
@@ -792,6 +843,29 @@ class App:
             y += 20 if font is self.f.name else 16
         d.text((pw + 8, HEIGHT - 22), "Esc: cancel", font=self.f.body, fill=DIM)
 
+    # -- password
+    def draw_password(self, d):
+        label = self.pw_job[0] if self.pw_job else ""
+        self.draw_header(d, "Admin password", "Esc to cancel")
+        d.text((10, HEADER_H + 8), ellipsize(d, label, self.f.body, WIDTH - 20), font=self.f.body,
+               fill=DIM)
+        d.text((10, HEADER_H + 26), "needs your password (the one sudo asks for).",
+               font=self.f.body, fill=DIM)
+        box = (10, HEADER_H + 48, WIDTH - 10, HEADER_H + 76)
+        d.rectangle(box, fill=SEL, outline=RED if self.pw_wrong else ACCENT, width=2)
+        dots = "\u2022" * min(len(self.pw_text), 24)
+        d.text((18, HEADER_H + 52), dots, font=self.f.big, fill=TEXT)
+        cx = 18 + _w(d, dots, self.f.big) + 2
+        if int(time.monotonic() * 2) % 2 == 0:
+            d.rectangle((cx, HEADER_H + 54, cx + 1, HEADER_H + 71), fill=TEXT)
+        y = HEADER_H + 86
+        if self.pw_wrong:
+            d.text((10, y), "Wrong password, try again.", font=self.f.body, fill=RED)
+        else:
+            d.text((10, y), "Enter: OK", font=self.f.body, fill=DIM)
+        d.text((10, y + 18), "Kept in memory for 5 minutes, never saved.", font=self.f.small,
+               fill=DIM)
+
     # -- name
     def draw_name(self, d):
         self.draw_header(d, "Name this tunnel", "QR code read", GREEN)
@@ -824,21 +898,7 @@ class App:
     # -- help
     def draw_help(self, d):
         self.draw_header(d, "WireZero help", "Esc to close")
-        if self.auth_problem:
-            lines = [("Permission problem", RED),
-                     ("The system refused the change.", TEXT),
-                     ("Reinstall WireZero, or run:", DIM),
-                     ("sudo usermod -aG wirezero $USER", ACCENT),
-                     ("then reboot the CardputerZero.", DIM)]
-            y = HEADER_H + 6
-            for text, color in lines:
-                font = self.f.mono if color == ACCENT else self.f.body
-                d.text((8, y), text, font=font, fill=color)
-                y += 17
-            d.line((0, y + 2, WIDTH, y + 2), fill=LINE)
-            y += 6
-        else:
-            y = HEADER_H + 4
+        y = HEADER_H + 4
         keys = [("Enter / 4", "Connect or disconnect"), ("5", "Import (6 there: scan QR)"),
                 ("6 / C", "Tunnel details"), ("7", "Toggle auto-connect at boot"),
                 ("8", "Delete tunnel"), ("F / X", "Move up / down"), ("Esc", "Back / quit")]
@@ -907,9 +967,10 @@ class App:
             self.handle(a)
         self.poll_jobs()
         self.poll_scan()
-        if self.screen in ("scan", "name"):
+        self.expire_password()
+        if self.screen in ("scan", "name", "password"):
             self.dirty = True
-        if self.screen not in ("fatal", "scan", "name") and not self.busy:
+        if self.screen not in ("fatal", "scan", "name", "password") and not self.busy:
             self.refresh()
         if self.busy:
             self._spin = (self._spin + 1) % 8
@@ -932,6 +993,7 @@ class App:
         finally:
             self.stop_scan()
             self.pending_conf = None
+            self.forget_password()
 
     def _run(self):
         self.start()
@@ -939,7 +1001,7 @@ class App:
         self.display.show(self.last_frame)
         while self.running:
             timeout = 0.08 if (self.busy or self.screen == "scan") else (
-                0.25 if self.screen == "name" else 0.5)
+                0.25 if self.screen in ("name", "password") else 0.5)
             self.tick(self.keys.poll(timeout))
 
 

@@ -1,9 +1,10 @@
 """wirezero-helper: the only part of WireZero that runs as root.
 
 It is reached through one sudoers rule (members of the `wirezero` group, no
-password) and can do exactly three things, all limited to WireGuard profiles:
+password) and can only act on WireGuard profiles:
 
     import NAME          WireGuard config text on stdin -> new NM profile
+    up UUID / down UUID  connect / disconnect a WireGuard profile
     delete UUID          delete a WireGuard profile
     autoconnect UUID yes|no
 
@@ -122,6 +123,12 @@ def main(argv):
     try:
         if len(argv) == 2 and argv[0] == "import":
             do_import(argv[1])
+        elif len(argv) == 2 and argv[0] == "up":
+            require_wireguard(argv[1])
+            nmcli("--wait", "25", "connection", "up", "uuid", argv[1], timeout=35)
+        elif len(argv) == 2 and argv[0] == "down":
+            require_wireguard(argv[1])
+            nmcli("connection", "down", "uuid", argv[1])
         elif len(argv) == 2 and argv[0] == "delete":
             require_wireguard(argv[1])
             nmcli("connection", "delete", "uuid", argv[1])
@@ -129,8 +136,8 @@ def main(argv):
             require_wireguard(argv[1])
             nmcli("connection", "modify", "uuid", argv[1], "connection.autoconnect", argv[2])
         else:
-            print("usage: wirezero-helper import NAME | delete UUID | autoconnect UUID yes|no",
-                  file=sys.stderr)
+            print("usage: wirezero-helper import NAME | up UUID | down UUID | delete UUID | "
+                  "autoconnect UUID yes|no", file=sys.stderr)
             return 2
     except Fail as e:
         print(str(e), file=sys.stderr)
