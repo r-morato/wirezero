@@ -235,9 +235,15 @@ class TestHelper(unittest.TestCase):
             return ""
         self._orig = helper.nmcli
         helper.nmcli = fake_nmcli
+        # The real helper runs as root and uses /run; tests use a private temp dir.
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig_tmp_root = helper.TMP_ROOT
+        helper.TMP_ROOT = self._tmp.name
 
     def tearDown(self):
         self.h.nmcli = self._orig
+        self.h.TMP_ROOT = self._orig_tmp_root
+        self._tmp.cleanup()
         sys.stdin = sys.__stdin__
 
     def test_nmcli_error_shows_reason_not_temp_path(self):

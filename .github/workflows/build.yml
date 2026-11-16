@@ -20,7 +20,9 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install test deps
-        run: pip install "pillow==12.3.0"
+        run: |
+          sudo apt-get install -y --no-install-recommends libzbar0t64 || sudo apt-get install -y --no-install-recommends libzbar0
+          pip install "pillow==12.3.0" "qrcode==8.2"
       - name: Unit tests
         run: python -m unittest discover -s tests -v
       - name: Build .deb
